@@ -116,6 +116,8 @@ def generate_latex_fila(data, df_full, fila="A"):
         return "ERRORE: Marcatori %<<...>> non trovati nel template."
 
     all_exercises_text = ""
+    used_images = set() # Per raccogliere i nomi delle immagini
+    img_pattern = r'\\includegraphics(?:\[.*?\])?\{(.*?)\}'
 
     for es in data['esercizi']:
         eid = es['id_es']
@@ -150,7 +152,11 @@ def generate_latex_fila(data, df_full, fila="A"):
                 actual_idx = (idx_sel + 1) % len(df_filtered) if fila == "B" and len(df_filtered) > 1 else idx_sel % len(df_filtered)
                 
                 row = df_filtered.iloc[actual_idx]
-                
+
+                # RACCOLTA IMMAGINI
+                used_images.update(re.findall(img_pattern, str(row['comando'])))
+                used_images.update(re.findall(img_pattern, str(row['esercizio'])))
+
                 # 3. Sostituzione nel template
                 v_out = var_block_tmpl.replace("{LVL}", f"[{livello_lettera}]")
                 v_out = v_out.replace("{ASR}", stringa_asterisco)
@@ -164,7 +170,7 @@ def generate_latex_fila(data, df_full, fila="A"):
         all_exercises_text += ex_out
 
     # Inserimento finale nel template
-    return final_tex.replace(ex_match.group(0), all_exercises_text)
+    return final_tex.replace(ex_match.group(0), all_exercises_text), used_images
 
 # --- GESTIONE STATO INIZIALE ---
 if 'db_esercizi' not in st.session_state:
@@ -371,41 +377,34 @@ elif st.session_state.app_mode == "ACTIVE":
         if st.button("➕ Aggiungi Nuovo Esercizio", key="add_down"):
             add_new_exercise(data)
 
-        # --- EXPORT ---
-        st.divider()
-        st.subheader("📦 Esportazione")
-
-        if st.button("🎁 GENERA PACCHETTO ZIP (FILA A + B + JSON)", type="primary", use_container_width=True):
-            # Generiamo i testi LaTeX
-            tex_a = generate_latex_fila(data, df_full, fila="A")
-            tex_b = generate_latex_fila(data, df_full, fila="B")
+    # --- EXPORT FINALE ---
+    st.divider()
+    st.subheader("📦 Esportazione")
+    if st.button("🎁 GENERA PACCHETTO ZIP (CON IMMAGINI)", type="primary", use_container_width=True):
+        tex_a, imgs_a = generate_latex_fila(data, df_full, fila="A")
+        tex_b, imgs_b = generate_latex_fila(data, df_full, fila="B")
+        tutte_immagini = imgs_a.union(imgs_b)
+        
+        id_v = data.get('idver', '11')
+        cl = data.get('classe', '1')
+        disc = data.get('disciplina', 'Materia').replace(" ", "_").lower()
+        base_name = f"{disc}_{cl}_{id_v}"
+        
+        zip_buf = io.BytesIO()
+        with zipfile.ZipFile(zip_buf, "w") as zf:
+            zf.writestr(f"verifica_{base_name}_FILA_A.tex", tex_a)
+            zf.writestr(f"verifica_{base_name}_FILA_B.tex", tex_b)
+            zf.writestr(f"configurazione_{base_name}.json", json.dumps(data, indent=4, default=json_serialize_helper))
             
-            # Recuperiamo i dati per il nome file
-            id_v = data.get('idver', '11')
-            cl = data.get('classe', '1')
-            disc = data.get('disciplina', 'Materia').replace(" ", "_").lower() # Sostituisce spazi con _
-            
-            # Pattern base del nome: disciplina_classe_idver
-            base_name = f"{disc}_{cl}_{id_v}"
-            
-            # Creiamo il buffer per lo ZIP
-            zip_buffer = io.BytesIO()
-            with zipfile.ZipFile(zip_buffer, "w") as zf:
-                # File LaTeX
-                zf.writestr(f"verifica_{base_name}_FILA_A.tex", tex_a)
-                zf.writestr(f"verifica_{base_name}_FILA_B.tex", tex_b)
-                
-                # File JSON
-                json_string = json.dumps(data, indent=4, ensure_ascii=False, default=json_serialize_helper)
-                zf.writestr(f"configurazione_{base_name}.json", json_string)
-            
-            st.success(f"Pacchetto per {data['disciplina']} (Classe {cl}) generato!")
-            st.download_button(
-                label="💾 SCARICA ARCHIVIO ZIP",
-                data=zip_buffer.getvalue(),
-                file_name=f"verifica_{base_name}_pack.zip",
-                mime="application/zip",
-                use_container_width=True
-    )
+            # AGGIUNTA IMMAGINI
+            for img_n in tutte_immagini:
+                for est in ['.png', '.jpg', '.jpeg', '.svg']:
+                    f_path = os.path.join("images", img_n + est)
+                    if os.path.exists(f_path):
+                        zf.write(f_path, arcname=os.path.join("images", img_n + est))
+                        break
+        
+        st.success(f"Pacchetto per {data['disciplina']} generato!")
+        st.download_button("💾 SCARICA ARCHIVIO ZIP", zip_buf.getvalue(), f"verifica_{base_name}_pack.zip", "application/zip", use_container_width=True)
     else:
         st.error(f"File {CSV_FILENAME} non trovato.")
