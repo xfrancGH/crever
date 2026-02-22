@@ -121,7 +121,20 @@ def generate_latex_fila(data, df_full, fila="A"):
     used_images = set() # Per raccogliere i nomi delle immagini
     img_pattern = r'\\includegraphics(?:\[.*?\])?\{(.*?)\}'
 
-    for es in data['esercizi']:
+    for i_es, es in enumerate(data['esercizi']):
+        # --- LOGICA INCROCIO V5 ---
+        # Determiniamo se per questo specifico esercizio dobbiamo usare il set 'A' o 'B'
+        if fila == "A":
+            current_logic = "A"
+        elif fila == "B":
+            current_logic = "B"
+        elif fila == "C":
+            # E1(A), E2(B), E3(A), E4(B)...
+            current_logic = "A" if i_es % 2 == 0 else "B"
+        elif fila == "D":
+            # E1(B), E2(A), E3(B), E4(A)...
+            current_logic = "B" if i_es % 2 == 0 else "A"
+
         eid = es['id_es']
         vars_text = ""
         for v_idx, var in enumerate(es['tipologia']):
@@ -135,43 +148,35 @@ def generate_latex_fila(data, df_full, fila="A"):
             ]
             
             if not df_filtered.empty:
-                # 1. Mappatura Livello Numerico -> Lettera
+                s_key = f"nav_{eid}_{v_idx}"
+                base_idx = st.session_state.preview_indices.get(s_key, 0)
+                
+                # Se la logica corrente è "B", facciamo ruotare l'esercizio (Variante successiva)
+                actual_idx = base_idx
+                if current_logic == "B" and len(df_filtered) > 1:
+                    actual_idx = base_idx + 1
+                
+                row = df_filtered.iloc[actual_idx % len(df_filtered)]
+
+                # Mappatura Livello e Asterisco
                 mappa_livelli = {1: "A", 2: "B", 3: "C", 4: "D", 5: "E"}
                 livello_num = int(var['livello'])
-                livello_lettera = mappa_livelli.get(livello_num, "A") # Default A per sicurezza
-                
-                # 2. Logica Asterisco: solo se livello è 1 (A) e asterisco è attivo nel progetto
-                # Se il livello è > 1, l'asterisco non deve mai apparire
-                stringa_asterisco = ""
-                if data.get('asterisco', False) and livello_num == 1:
-                    stringa_asterisco = "*"
+                stringa_asterisco = "*" if (data.get('asterisco', False) and livello_num == 1) else ""
 
-                # Recupero l'indice dall'anteprima (navigazione V2)
-                s_key = f"nav_{eid}_{v_idx}"
-                idx_sel = st.session_state.preview_indices.get(s_key, 0)
-                
-                # Fila B: prende l'esercizio successivo nel database
-                actual_idx = (idx_sel + 1) % len(df_filtered) if fila == "B" and len(df_filtered) > 1 else idx_sel % len(df_filtered)
-                
-                row = df_filtered.iloc[actual_idx]
-
-                # RACCOLTA IMMAGINI
+                # Raccolta immagini citate nel DB
                 used_images.update(re.findall(img_pattern, str(row['comando'])))
                 used_images.update(re.findall(img_pattern, str(row['esercizio'])))
 
-                # 3. Sostituzione nel template
-                v_out = var_block_tmpl.replace("{LVL}", f"[{livello_lettera}]")
+                # Sostituzione nel template della variante
+                v_out = var_block_tmpl.replace("{LVL}", f"[{mappa_livelli.get(livello_num, 'A')}]")
                 v_out = v_out.replace("{ASR}", stringa_asterisco)
                 v_out = v_out.replace("{CMD}", str(row['comando']).replace('\\n', '\n'))
                 v_out = v_out.replace("{ESR}", str(row['esercizio']).replace('\\n', '\n'))
                 v_out = v_out.replace("PNT", str(var['punti']))
                 vars_text += v_out
 
-        # Inserimento varianti nel blocco esercizio
-        ex_out = ex_block_tmpl.replace(var_match.group(0), vars_text)
-        all_exercises_text += ex_out
+        all_exercises_text += ex_block_tmpl.replace(var_match.group(0), vars_text)
 
-    # Inserimento finale nel template
     return final_tex.replace(ex_match.group(0), all_exercises_text), used_images
 
 # --- GESTIONE STATO INIZIALE ---
@@ -389,10 +394,15 @@ elif st.session_state.app_mode == "ACTIVE":
         # --- EXPORT FINALE ---
         st.divider()
         st.subheader("📦 Esportazione")
-        if st.button("🎁 GENERA PACCHETTO ZIP (CON IMMAGINI)", type="primary", use_container_width=True):
+        if st.button("🎁 GENERA PACCHETTO ZIP (FILE A-B-C-D)", type="primary", use_container_width=True):
+            # 1. Chiamiamo la funzione per tutte e 4 le file
             tex_a, imgs_a = generate_latex_fila(data, df_full, fila="A")
             tex_b, imgs_b = generate_latex_fila(data, df_full, fila="B")
-            tutte_immagini = imgs_a.union(imgs_b)
+            tex_c, imgs_c = generate_latex_fila(data, df_full, fila="C")
+            tex_d, imgs_d = generate_latex_fila(data, df_full, fila="D")
+            
+            # 2. Unione dei set di immagini (usando l'operatore pipe | per i set)
+            tutte_immagini = imgs_a | imgs_b | imgs_c | imgs_d
             
             id_v = data.get('idver', '11')
             cl = data.get('classe', '1')
@@ -401,11 +411,14 @@ elif st.session_state.app_mode == "ACTIVE":
             
             zip_buf = io.BytesIO()
             with zipfile.ZipFile(zip_buf, "w") as zf:
+                # 3. Scrittura dei 4 file TeX nello ZIP
                 zf.writestr(f"verifica_{base_name}_FILA_A.tex", tex_a)
                 zf.writestr(f"verifica_{base_name}_FILA_B.tex", tex_b)
-                zf.writestr(f"configurazione_{base_name}.json", json.dumps(data, indent=4, default=json_serialize_helper))
+                zf.writestr(f"verifica_{base_name}_FILA_C.tex", tex_c)
+                zf.writestr(f"verifica_{base_name}_FILA_D.tex", tex_d)
                 
-                # AGGIUNTA IMMAGINI
+                # 4. Scrittura JSON e Immagini (come già facevi nella V4)
+                zf.writestr(f"configurazione_{base_name}.json", json.dumps(data, indent=4, default=json_serialize_helper))
                 for img_n in tutte_immagini:
                     for est in ['.png', '.jpg', '.jpeg', '.svg']:
                         f_path = os.path.join("images", img_n + est)
@@ -413,7 +426,7 @@ elif st.session_state.app_mode == "ACTIVE":
                             zf.write(f_path, arcname=os.path.join("images", img_n + est))
                             break
             
-            st.success(f"Pacchetto per {data['disciplina']} generato!")
-            st.download_button("💾 SCARICA ARCHIVIO ZIP", zip_buf.getvalue(), f"verifica_{base_name}_pack.zip", "application/zip", use_container_width=True)
+            st.success("Pacchetto A-B-C-D generato!")
+            st.download_button("💾 SCARICA ZIP", zip_buf.getvalue(), f"verifica_{base_name}_pack.zip", "application/zip")
     else:
         st.error(f"File {CSV_FILENAME} non trovato.")
