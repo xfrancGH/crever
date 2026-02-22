@@ -6,8 +6,6 @@ import time
 import numpy as np # Assicurati di averlo tra gli import
 import zipfile
 import io
-import re        # Già presente
-import requests  # <--- AGGIUNGI QUESTA RIGA
 
 def json_serialize_helper(obj):
     if isinstance(obj, (np.int64, np.int32)):
@@ -18,17 +16,8 @@ def json_serialize_helper(obj):
 
 st.set_page_config(page_title="Configuratore Verifiche", layout="wide")
 
-# INIZIALIZZAZIONE DEGLI STATI
-if 'latex_ready' not in st.session_state:
-    st.session_state.latex_ready = False
-if 'pdf_ready' not in st.session_state:
-    st.session_state.pdf_ready = False
-if 'current_latex_zip' not in st.session_state:
-    st.session_state.current_latex_zip = None
-if 'current_pdf_zip' not in st.session_state:
-    st.session_state.current_pdf_zip = None
-
 CSV_FILENAME = os.path.join("CSV", "db_esercizi.csv")
+# TEMPLATE_FILENAME = os.path.join("templates", "tver_1.tex")
 
 # --- FUNZIONI DI SUPPORTO ---
 def load_local_db():
@@ -402,107 +391,42 @@ elif st.session_state.app_mode == "ACTIVE":
         if st.button("➕ Aggiungi Nuovo Esercizio", key="add_down"):
             add_new_exercise(data)
 
-        # --- EXPORT E SALVATAGGIO VERSIONE 6 (DEFINITIVA) ---
+        # --- EXPORT FINALE ---
         st.divider()
-        st.subheader("📦 Esportazione e Salvataggio")
-
-        # Prepariamo i nomi file standard basati sui dati della verifica
-        id_v = data.get('idver', '11')
-        cl = data.get('classe', '1')
-        disc = data.get('disciplina', 'Materia').replace(" ", "_").lower()
-        base_name = f"{disc}_{cl}_{id_v}"
-
-        # 1. SALVATAGGIO PROGETTO (JSON) - Sempre visibile
-        st.download_button(
-            label="💾 SALVA PROGETTO (.json)",
-            data=json.dumps(data, indent=4, default=json_serialize_helper),
-            file_name=f"progetto_{base_name}.json",
-            mime="application/json",
-            use_container_width=True,
-            help="Scarica questo file per poter ricaricare l'intera configurazione in futuro."
-        )
-
-        st.write("") # Spaziatore
-
-        # 2. STEP 1: GENERAZIONE PACCHETTO LATEX
-        if st.button("🎁 GENERA PACCHETTO LATEX (FILE A-B-C-D)", type="primary", use_container_width=True):
-            with st.spinner("Preparazione sorgenti LaTeX e immagini..."):
-                # Generiamo le 4 versioni (A, B e gli incroci C, D)
-                tex_a, imgs_a = generate_latex_fila(data, df_full, fila="A")
-                tex_b, imgs_b = generate_latex_fila(data, df_full, fila="B")
-                tex_c, imgs_c = generate_latex_fila(data, df_full, fila="C")
-                tex_d, imgs_d = generate_latex_fila(data, df_full, fila="D")
-                
-                # Uniamo tutti i nomi delle immagini utilizzate in un unico set
-                tutte_immagini = imgs_a | imgs_b | imgs_c | imgs_d
-                
-                zip_buf = io.BytesIO()
-                with zipfile.ZipFile(zip_buf, "w") as zf:
-                    # Inseriamo i 4 file .tex
-                    for let, content in zip(["A", "B", "C", "D"], [tex_a, tex_b, tex_c, tex_d]):
-                        zf.writestr(f"verifica_{base_name}_FILA_{let}.tex", content)
-                    
-                    # Inseriamo la cartella immagini
-                    for img_n in tutte_immagini:
-                        for est in ['.png', '.jpg', '.jpeg', '.svg']:
-                            f_path = os.path.join("images", img_n + est)
-                            if os.path.exists(f_path):
-                                zf.write(f_path, arcname=os.path.join("images", img_n + est))
-                                break
-                
-                # Salviamo nello stato per rendere i pulsanti successivi persistenti
-                st.session_state.current_latex_zip = zip_buf.getvalue()
-                st.session_state.current_base_name = base_name
-                st.session_state.latex_ready = True
-                st.session_state.pdf_ready = False # Reset se i sorgenti vengono rigenerati
-                st.rerun()
-
-        # 3. STEP 2: SCARICA LATEX O GENERA PDF (Visibili solo dopo lo Step 1)
-        if st.session_state.get('latex_ready'):
-            st.info("✅ Pacchetto sorgente pronto!")
-            c1, c2 = st.columns(2)
+        st.subheader("📦 Esportazione")
+        if st.button("🎁 GENERA PACCHETTO ZIP (FILE A-B-C-D)", type="primary", use_container_width=True):
+            # 1. Chiamiamo la funzione per tutte e 4 le file
+            tex_a, imgs_a = generate_latex_fila(data, df_full, fila="A")
+            tex_b, imgs_b = generate_latex_fila(data, df_full, fila="B")
+            tex_c, imgs_c = generate_latex_fila(data, df_full, fila="C")
+            tex_d, imgs_d = generate_latex_fila(data, df_full, fila="D")
             
-            with c1:
-                st.download_button(
-                    "💾 SCARICA LATEX (.zip)", 
-                    st.session_state.current_latex_zip, 
-                    f"sorgenti_{st.session_state.current_base_name}.zip", 
-                    "application/zip",
-                    use_container_width=True
-                )
+            # 2. Unione dei set di immagini (usando l'operatore pipe | per i set)
+            tutte_immagini = imgs_a | imgs_b | imgs_c | imgs_d
             
-            with c2:
-                if st.button("🚀 GENERA PDF (Online)", type="secondary", use_container_width=True):
-                    API_URL = "https://compiletex.onrender.com/compile-multiple"
-                    with st.spinner("Compilazione sul server in corso..."):
-                        try:
-                            # Preparazione file per l'invio
-                            files = {"file": (f"{st.session_state.current_base_name}.zip", st.session_state.current_latex_zip, "application/zip")}
-                            
-                            # Timeout a 90 secondi (prudenziale basato sui tuoi test)
-                            response = requests.post(API_URL, files=files, timeout=90)
-
-                            if response.status_code == 200:
-                                st.session_state.current_pdf_zip = response.content
-                                st.session_state.pdf_ready = True
-                                st.rerun()
-                            else:
-                                st.error(f"❌ Errore del server ({response.status_code})")
-                                try:
-                                    st.text_area("Log Errore:", value=response.json().get("detail", "Dettaglio non disponibile"), height=150)
-                                except: pass
-                        except Exception as e:
-                            st.error(f"⚠️ Errore di connessione: {e}")
-
-        # 4. STEP 3: DOWNLOAD FINALE PDF (Visibile solo dopo lo Step 2)
-        if st.session_state.get('pdf_ready'):
-            st.success("✨ PDF compilati con successo!")
-            st.download_button(
-                label="📥 SCARICA PDF (.zip)",
-                data=st.session_state.current_pdf_zip,
-                file_name=f"verifiche_{st.session_state.current_base_name}_PDF.zip",
-                mime="application/zip",
-                use_container_width=True
-            )
+            id_v = data.get('idver', '11')
+            cl = data.get('classe', '1')
+            disc = data.get('disciplina', 'Materia').replace(" ", "_").lower()
+            base_name = f"{disc}_{cl}_{id_v}"
+            
+            zip_buf = io.BytesIO()
+            with zipfile.ZipFile(zip_buf, "w") as zf:
+                # 3. Scrittura dei 4 file TeX nello ZIP
+                zf.writestr(f"verifica_{base_name}_FILA_A.tex", tex_a)
+                zf.writestr(f"verifica_{base_name}_FILA_B.tex", tex_b)
+                zf.writestr(f"verifica_{base_name}_FILA_C.tex", tex_c)
+                zf.writestr(f"verifica_{base_name}_FILA_D.tex", tex_d)
+                
+                # 4. Scrittura JSON e Immagini (come già facevi nella V4)
+                zf.writestr(f"configurazione_{base_name}.json", json.dumps(data, indent=4, default=json_serialize_helper))
+                for img_n in tutte_immagini:
+                    for est in ['.png', '.jpg', '.jpeg', '.svg']:
+                        f_path = os.path.join("images", img_n + est)
+                        if os.path.exists(f_path):
+                            zf.write(f_path, arcname=os.path.join("images", img_n + est))
+                            break
+            
+            st.success("Pacchetto A-B-C-D generato!")
+            st.download_button("💾 SCARICA ZIP", zip_buf.getvalue(), f"verifica_{base_name}_pack.zip", "application/zip")
     else:
         st.error(f"File {CSV_FILENAME} non trovato.")
