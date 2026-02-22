@@ -1,7 +1,7 @@
 installazione stremlit
 
 ```
-source ./venv/bin/activate
+source /home/franc/venv/bin/activate
 pip3 install streamlit
 ```
 
