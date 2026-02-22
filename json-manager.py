@@ -103,8 +103,10 @@ def generate_latex_fila(data, df_full, fila="A"):
     with open(template_path, 'r', encoding='utf-8') as f:
         template = f.read()
 
-    # Sostituzione ID Verifica
+    # Sostituiamo IDV, MAT e IST
     final_tex = template.replace("IDV", str(data.get('idver', '11')))
+    final_tex = final_tex.replace("{MAT}", str(data.get('disciplina', 'Materia')))
+    final_tex = final_tex.replace("{IST}", str(data.get('istituto', 'Istituto')))
 
     try:
         # Estrazione blocchi dal template
@@ -257,19 +259,26 @@ elif st.session_state.app_mode == "ACTIVE":
     if st.session_state.db_esercizi is not None:
         df_full = st.session_state.db_esercizi
 
-        # --- INTESTAZIONE ---
+        # --- INTESTAZIONE AGGIORNATA ---
         st.header("⚙️ Intestazione")
         with st.container(border=True):
-            c1, c2, c3, c4, c5 = st.columns(5)
+            # Passiamo a 6 colonne per includere l'Istituto
+            c1, c2, c3, c4, c5, c6 = st.columns(6)
             with c1:
                 st.text_input("🎯 Disciplina", value=data.get('disciplina', ""), disabled=True)
                 df_disc = df_full[df_full['disciplina'] == data['disciplina']]
-            with c2: data['idver'] = st.text_input("ID Verifica", data.get('idver', ""))
-            with c3:
+            with c2:
+                # Nuovo campo Istituto
+                data['istituto'] = st.text_input("🏢 Istituto", data.get('istituto', "IIS Casimiri"), disabled=True)
+            with c3: 
+                data['idver'] = st.text_input("ID Verifica", data.get('idver', ""))
+            with c4:
                 cl_opts = [1, 2, 3, 4, 5]
                 data['classe'] = st.selectbox("Classe", cl_opts, index=cl_opts.index(data.get('classe', 1)) if data.get('classe') in cl_opts else 0)
-            with c4: data['idtemplate'] = st.number_input("ID Template", value=data.get('idtemplate', 1))
-            with c5: data['asterisco'] = st.checkbox("Asterisco (DSA)", value=data.get('asterisco', True))
+            with c5: 
+                data['idtemplate'] = st.number_input("ID Template", value=data.get('idtemplate', 1))
+            with c6: 
+                data['asterisco'] = st.checkbox("Asterisco (DSA)", value=data.get('asterisco', True))
 
         st.divider()
 
@@ -377,34 +386,34 @@ elif st.session_state.app_mode == "ACTIVE":
         if st.button("➕ Aggiungi Nuovo Esercizio", key="add_down"):
             add_new_exercise(data)
 
-    # --- EXPORT FINALE ---
-    st.divider()
-    st.subheader("📦 Esportazione")
-    if st.button("🎁 GENERA PACCHETTO ZIP (CON IMMAGINI)", type="primary", use_container_width=True):
-        tex_a, imgs_a = generate_latex_fila(data, df_full, fila="A")
-        tex_b, imgs_b = generate_latex_fila(data, df_full, fila="B")
-        tutte_immagini = imgs_a.union(imgs_b)
-        
-        id_v = data.get('idver', '11')
-        cl = data.get('classe', '1')
-        disc = data.get('disciplina', 'Materia').replace(" ", "_").lower()
-        base_name = f"{disc}_{cl}_{id_v}"
-        
-        zip_buf = io.BytesIO()
-        with zipfile.ZipFile(zip_buf, "w") as zf:
-            zf.writestr(f"verifica_{base_name}_FILA_A.tex", tex_a)
-            zf.writestr(f"verifica_{base_name}_FILA_B.tex", tex_b)
-            zf.writestr(f"configurazione_{base_name}.json", json.dumps(data, indent=4, default=json_serialize_helper))
+        # --- EXPORT FINALE ---
+        st.divider()
+        st.subheader("📦 Esportazione")
+        if st.button("🎁 GENERA PACCHETTO ZIP (CON IMMAGINI)", type="primary", use_container_width=True):
+            tex_a, imgs_a = generate_latex_fila(data, df_full, fila="A")
+            tex_b, imgs_b = generate_latex_fila(data, df_full, fila="B")
+            tutte_immagini = imgs_a.union(imgs_b)
             
-            # AGGIUNTA IMMAGINI
-            for img_n in tutte_immagini:
-                for est in ['.png', '.jpg', '.jpeg', '.svg']:
-                    f_path = os.path.join("images", img_n + est)
-                    if os.path.exists(f_path):
-                        zf.write(f_path, arcname=os.path.join("images", img_n + est))
-                        break
-        
-        st.success(f"Pacchetto per {data['disciplina']} generato!")
-        st.download_button("💾 SCARICA ARCHIVIO ZIP", zip_buf.getvalue(), f"verifica_{base_name}_pack.zip", "application/zip", use_container_width=True)
+            id_v = data.get('idver', '11')
+            cl = data.get('classe', '1')
+            disc = data.get('disciplina', 'Materia').replace(" ", "_").lower()
+            base_name = f"{disc}_{cl}_{id_v}"
+            
+            zip_buf = io.BytesIO()
+            with zipfile.ZipFile(zip_buf, "w") as zf:
+                zf.writestr(f"verifica_{base_name}_FILA_A.tex", tex_a)
+                zf.writestr(f"verifica_{base_name}_FILA_B.tex", tex_b)
+                zf.writestr(f"configurazione_{base_name}.json", json.dumps(data, indent=4, default=json_serialize_helper))
+                
+                # AGGIUNTA IMMAGINI
+                for img_n in tutte_immagini:
+                    for est in ['.png', '.jpg', '.jpeg', '.svg']:
+                        f_path = os.path.join("images", img_n + est)
+                        if os.path.exists(f_path):
+                            zf.write(f_path, arcname=os.path.join("images", img_n + est))
+                            break
+            
+            st.success(f"Pacchetto per {data['disciplina']} generato!")
+            st.download_button("💾 SCARICA ARCHIVIO ZIP", zip_buf.getvalue(), f"verifica_{base_name}_pack.zip", "application/zip", use_container_width=True)
     else:
         st.error(f"File {CSV_FILENAME} non trovato.")
