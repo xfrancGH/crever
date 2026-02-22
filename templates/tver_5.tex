@@ -1,0 +1,73 @@
+\documentclass[a4paper,12pt]{article}
+\usepackage[T1]{fontenc}
+\usepackage[utf8]{inputenc}
+\usepackage[italian]{babel}
+\usepackage{amsmath,cases,eqparbox,amsthm}
+\usepackage{geometry}
+\geometry{a4paper,top=2cm,bottom=2cm,left=0.8cm,right=1.0cm,%
+	heightrounded,bindingoffset=5mm}
+\usepackage{graphicx, amsmath, siunitx, tabularx}
+\graphicspath{ {./images/} }
+
+\title{Verifica di Fisica}
+\author{Francesco Allassia}
+
+\theoremstyle{plain}
+\newtheorem{esercizio}{Esercizio}
+
+\usepackage{xpatch}
+\makeatletter
+\xpatchcmd{\@thm}{\thm@headpunct{.}}{\thm@headpunct{}}{}{}
+\makeatother
+
+\renewcommand{\thefootnote}{\fnsymbol{footnote}}
+\pagenumbering{gobble}
+
+\begin{document}
+%\maketitle
+
+\begin{center}
+	{\textbf{VERIFICA DI FISICA} \verb!IDV! \textbf{- IIS R. Casimiri}}
+\end{center}
+
+\small{\textit{\textbf{ISTRUZIONI:} la valutazione della verifica verrà effettuata tramite la <<Griglia di valutazione>> condivisa nel registro
+elettronico. Ad ogni esercizio è associato un punteggio massimo e gli esercizi contrassegnati con \emph{\textbf{*}} rappresentano gli obiettivi minimi. Per ogni esercizio, lo studente deve svolgere soltanto una tipologia \emph{\textbf{[A]}}, \emph{\textbf{[B]}}, ..., che indica il suo livello di difficolt{\`a}, barrandola prima della consegna. Al punteggio realizzato con gli esercizi saranno aggiunti 2 punti, che rappresentano la valutazione di base. Il tempo consentito per lo svolgimento della verifica è di 45 minuti e per gli alunni DSA è previsto un tempo aggiuntivo di 15 minuti}}
+
+\begin{center}
+	\begin{tabular}{llll}
+		\hline
+		&  &  & \\
+		Cognome .................................... & 
+		Nome ....................................... &
+		Classe ......... & 
+		Data .................\\
+		\hline
+	\end{tabular}
+\end{center}
+
+% \bigskip
+
+% begin template esercizio
+%<<SECESR>>
+\begin{tabularx}{\textwidth}{ X X }
+	\begin{esercizio}
+	\end{esercizio}	
+	&
+	\\
+	
+	%<<SECTPL>>	
+	\emph{\textbf{LVL}{ASR} {CMD}} 
+	&		
+	\hspace*{\fill} \verb|(punti: PNT)|
+	{ESR}
+	\\
+	% & \\	
+	\hline
+	& \\	
+	%<<SECTPL>>	
+
+\end{tabularx}
+%<<SECESR>>
+% end template esercizio
+
+\end{document}

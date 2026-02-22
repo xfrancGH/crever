@@ -1,0 +1,82 @@
+{
+    "disciplina": "Fisica",   
+    "classe": 2,
+    "idver": "11",
+    "idtemplate": 5,
+    "asterisco": true,
+    "esercizi": [
+        {
+            "tipologia": [
+                {
+                    "argomento": "forze",
+                    "subargomento": "a_forza_elastica",
+                    "livello": 1,
+                    "punti": "1",
+                    "tipo": "A"
+                },
+                {
+                    "argomento": "forze",
+                    "subargomento": "a_forza_elastica",
+                    "livello": 2,
+                    "punti": "2",
+                    "tipo": "A"
+                }
+            ]
+        },
+        {
+            "tipologia": [
+                {
+                    "argomento": "forze",
+                    "subargomento": "a_forza_attrito",
+                    "livello": 1,
+                    "punti": "1,5",
+                    "tipo": "A"
+                },
+                {
+                    "argomento": "forze",
+                    "subargomento": "a_forza_attrito",
+                    "livello": 2,
+                    "punti": "2",
+                    "tipo": "A"
+                }
+            ]
+        },
+        {
+            "tipologia": [
+                {
+                    "argomento": "equilibrio",
+                    "subargomento": "a_punto_materiale",
+                    "livello": 1,
+                    "punti": "1",
+                    "tipo": "A"
+                },
+                {
+                    "argomento": "equilibrio",
+                    "subargomento": "a_punto_materiale",
+                    "livello": 2,
+                    "punti": "2",
+                    "tipo": "A"
+                }
+            ]
+        },
+        {
+            "tipologia": [
+                {
+                    "argomento": "equilibrio",
+                    "subargomento": "a_corpo_rigido",
+                    "livello": 1,
+                    "punti": "1,5",
+                    "tipo": "A"
+                },
+                {
+                    "argomento": "equilibrio",
+                    "subargomento": "a_corpo_rigido",
+                    "livello": 2,
+                    "punti": "2",
+                    "tipo": "A"
+                }
+            ]
+        }
+    ]
+}
+

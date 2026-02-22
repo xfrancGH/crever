@@ -1,0 +1,76 @@
+\documentclass[a4paper,12pt]{article}
+\usepackage[T1]{fontenc}
+\usepackage[utf8]{inputenc}
+\usepackage[italian]{babel}
+\usepackage{amsmath,cases,eqparbox,amsthm}
+\usepackage{geometry}
+\geometry{a4paper,top=2cm,bottom=2cm,left=0.8cm,right=1.0cm,%
+	heightrounded,bindingoffset=5mm}
+\usepackage{graphicx}
+\graphicspath{ {./images/} }
+
+\usepackage{multicol}
+\setlength{\columnsep}{1cm}
+
+\usepackage{tasks}
+\usepackage{exsheets}
+\SetupExSheets[question]{type=exam}
+
+\title{Verifica di Matematica}
+\author{Francesco Allassia}
+
+\theoremstyle{plain}
+\newtheorem{esercizio}{Esercizio}
+
+\renewcommand{\thefootnote}{\fnsymbol{footnote}}
+\pagenumbering{gobble}
+
+\begin{document}
+%\maketitle
+
+\begin{center}
+	{\textbf{VERIFICA DI MATEMATICA} \verb!IDV! \textbf{- IIS R. Casimiri}}
+\end{center}
+
+\small{\textit{\textbf{ISTRUZIONI:} Gli esercizi a risposta multipla hanno una sola risposta esatta. Per ogni risposta corretta si ottengono punti 1 e per le risposte errate non si perdono punti. Gli esercizi contrassegnati con (*) rappresentano gli obiettivi minimi. La
+valutazione di base è pari a 2 punti}}
+
+\begin{center}
+	\begin{tabular}{llll}
+		\hline
+		&  &  & \\
+		Cognome .................................... & 
+		Nome ....................................... &
+		Classe ......... & 
+		Data .................\\
+		\hline
+	\end{tabular}
+\end{center}
+
+% \bigskip
+
+\begin{multicols}{2}
+	
+\settasks{
+	counter-format=[tsk[A]],
+	label-width=4ex
+}
+
+% begin template esercizio
+%<<SECESR>>
+\begin{esercizio}
+	%<<SECTPL>>	
+	\emph{\textbf{ASR} {CMD}} %{LVL}
+	\medskip
+	\newline
+	\small{ESR}
+	% \hspace*{\fill} {\verb!(punti PNT)!}
+	\bigskip
+	%<<SECTPL>>	
+\end{esercizio}	
+%<<SECESR>>
+% end template esercizio
+
+\end{multicols}
+
+\end{document}
