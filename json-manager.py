@@ -43,6 +43,10 @@ try:
     # Pulizia righe vuote
     df_full = df_full.dropna(how="all")
     # Salviamo nel session_state per coerenza con il tuo codice precedente
+    if 'livello' in df_full.columns:
+        # Riempi eventuali celle vuote con 0 e converti in int
+        df_full['livello'] = pd.to_numeric(df_full['livello'], errors='coerce').fillna(0).astype(int)
+
     st.session_state.db_esercizi = df_full
     
 except Exception as e:
@@ -305,7 +309,7 @@ elif st.session_state.app_mode == "ACTIVE":
                 df_disc = df_full[df_full['disciplina'] == data['disciplina']]
             with c2:
                 # Nuovo campo Istituto
-                data['istituto'] = st.text_input("🏢 Istituto", data.get('istituto', "IIS Casimiri"), disabled=True)
+                data['istituto'] = st.text_input("🏢 Istituto", data.get('istituto', "IIS Casimiri"), disabled=False)
             with c3: 
                 data['idver'] = st.text_input("ID Verifica", data.get('idver', ""))
             with c4:
