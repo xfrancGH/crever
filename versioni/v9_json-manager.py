@@ -562,3 +562,5 @@ elif st.session_state.app_mode == "ACTIVE":
                 mime="application/zip",
                 use_container_width=True
             )
+    else:
+        st.error(f"File {CSV_FILENAME} non trovato.")
