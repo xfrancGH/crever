@@ -6,6 +6,16 @@ import time
 import numpy as np # Assicurati di averlo tra gli import
 import zipfile
 import io
+import re        # Già presente
+import requests  # <--- AGGIUNGI QUESTA RIGA
+from streamlit_gsheets import GSheetsConnection
+# --- NUOVI IMPORT PER GOOGLE DRIVE ---
+from googleapiclient.discovery import build
+from google.oauth2 import service_account
+
+# --- CONFIGURAZIONE DRIVE ---
+# Inserisci qui l'ID della cartella che contiene i file .tex
+FOLDER_ID_TEMPLATES = "1NW3yw4mluwS518DVyHh2OznGP-m87inQ"
 
 def json_serialize_helper(obj):
     if isinstance(obj, (np.int64, np.int32)):
@@ -16,23 +26,69 @@ def json_serialize_helper(obj):
 
 st.set_page_config(page_title="Configuratore Verifiche", layout="wide")
 
-CSV_FILENAME = os.path.join("CSV", "db_esercizi.csv")
-# TEMPLATE_FILENAME = os.path.join("templates", "tver_1.tex")
+# --- FUNZIONE CARICAMENTO TEMPLATE DA DRIVE ---
+@st.cache_data(ttl=3600)
+def load_templates_from_drive():
+    try:
+        # Usa le stesse credenziali già presenti nei secrets per GSheets
+        creds_info = st.secrets["connections"]["gsheets"]
+        creds = service_account.Credentials.from_service_account_info(creds_info)
+        service = build('drive', 'v3', credentials=creds)
 
-# --- FUNZIONI DI SUPPORTO ---
-def load_local_db():
-    if os.path.exists(CSV_FILENAME):
-        try:
-            df = pd.read_csv(CSV_FILENAME, sep=';')
-            df.columns = df.columns.str.lower().str.strip()
-            return df
-        except Exception as e:
-            st.error(f"Errore caricamento CSV: {e}")
-            return None
-    return None
+        # Cerca file .tex nella cartella specifica
+        query = f"'{FOLDER_ID_TEMPLATES}' in parents and name contains '.tex'"
+        results = service.files().list(q=query, fields="files(id, name)").execute()
+        items = results.get('files', [])
 
-import re
-import os
+        if not items:
+            st.warning("⚠️ Nessun file .tex trovato nella cartella di Google Drive.")
+            return {}
+
+        templates = {}
+        for item in items:
+            file_id = item['id']
+            file_name = item['name']
+            # Download contenuto
+            content = service.files().get_media(fileId=file_id).execute()
+            templates[file_name] = content.decode('utf-8')
+        
+        return templates
+    except Exception as e:
+        st.error(f"❌ Errore nel caricamento template da Drive: {e}")
+        return {}
+
+# INIZIALIZZAZIONE DEGLI STATI (Aggiornata)
+if 'latex_ready' not in st.session_state:
+    st.session_state.latex_ready = False
+if 'pdf_ready' not in st.session_state:
+    st.session_state.pdf_ready = False
+if 'current_latex_zip' not in st.session_state:
+    st.session_state.current_latex_zip = None
+if 'current_pdf_zip' not in st.session_state:
+    st.session_state.current_pdf_zip = None
+if 'current_base_name' not in st.session_state:
+    st.session_state.current_base_name = "verifica"
+if 'db_esercizi' not in st.session_state:
+    st.session_state.db_esercizi = None
+
+# Carichiamo i template all'avvio (Cache di 1 ora)
+templates_db = load_templates_from_drive()
+
+# --- CARICAMENTO DATABASE ---
+try:
+    conn = st.connection("gsheets", type=GSheetsConnection)
+    df_full = conn.read(ttl=600)
+    df_full.columns = df_full.columns.str.lower()
+    df_full = df_full.dropna(how="all")
+    if 'livello' in df_full.columns:
+        df_full['livello'] = pd.to_numeric(df_full['livello'], errors='coerce').fillna(0).astype(int)
+    st.session_state.db_esercizi = df_full
+except Exception as e:
+    st.error("❌ Errore durante il collegamento a Google Sheets.")
+    st.exception(e)
+    st.stop()
+
+# Da qui in poi il codice prosegue usando st.session_state.db_esercizi
 
 def render_preview(testo_raw):
     if pd.isna(testo_raw) or testo_raw == "" or str(testo_raw).lower() == "nan": 
@@ -90,38 +146,48 @@ def add_new_exercise(data_store):
     st.session_state[f"exp_{unique_id}"] = True
     st.rerun()
 
-def generate_latex_fila(data, df_full, fila="A"):
-    # Recupera l'idtemplate dal JSON (default a 1 se non presente)
-    id_t = data.get('idtemplate', 1)
+# --- GENERAZIONE LATEX (MODIFICATA PER USARE DRIVE) ---
+def generate_latex_fila(data, df_full, fila="A", is_correttore=False):
+    # Selezione del template dal dizionario caricato da Drive
+    if is_correttore:
+        file_target = "tcorr.tex"
+    else:
+        id_t = data.get('idtemplate', 1)
+        file_target = f"tver_{id_t}.tex"
     
-    # Costruisce il percorso: templates/tver_1.tex, templates/tver_2.tex, ecc.
-    template_path = os.path.join("templates", f"tver_{id_t}.tex")
+    # Recuperiamo il testo dal database dei template caricato all'avvio
+    template = templates_db.get(file_target)
     
-    if not os.path.exists(template_path):
-        return f"ERRORE: Template '{template_path}' non trovato."
-    
-    with open(template_path, 'r', encoding='utf-8') as f:
-        template = f.read()
+    if not template:
+        return f"ERRORE: Template '{file_target}' non trovato su Google Drive.", set()
 
-    # Sostituzione ID Verifica
+    # Sostituzioni globali
     final_tex = template.replace("IDV", str(data.get('idver', '11')))
+    final_tex = final_tex.replace("{MAT}", str(data.get('disciplina', 'Materia')))
+    final_tex = final_tex.replace("{IST}", str(data.get('istituto', 'Istituto')))
+    final_tex = final_tex.replace("{FILA}", fila)
 
     try:
-        # Estrazione blocchi dal template
         ex_match = re.search(r'%<<SECESR>>(.*?)%<<SECESR>>', final_tex, re.DOTALL)
         ex_block_tmpl = ex_match.group(1)
         var_match = re.search(r'%<<SECTPL>>(.*?)%<<SECTPL>>', ex_block_tmpl, re.DOTALL)
         var_block_tmpl = var_match.group(1)
     except:
-        return "ERRORE: Marcatori %<<...>> non trovati nel template."
+        return "ERRORE: Marcatori %<<...>> non trovati nel template.", set()
 
     all_exercises_text = ""
+    used_images = set()
+    img_pattern = r'\\includegraphics(?:\[.*?\])?\{(.*?)\}'
 
-    for es in data['esercizi']:
+    for i_es, es in enumerate(data['esercizi']):
+        if fila == "A": current_logic = "A"
+        elif fila == "B": current_logic = "B"
+        elif fila == "C": current_logic = "A" if i_es % 2 == 0 else "B"
+        elif fila == "D": current_logic = "B" if i_es % 2 == 0 else "A"
+
         eid = es['id_es']
         vars_text = ""
         for v_idx, var in enumerate(es['tipologia']):
-            # Filtro dati
             df_filtered = df_full[
                 (df_full['disciplina'] == data['disciplina']) &
                 (df_full['tipo'] == var['tipo']) &
@@ -131,44 +197,38 @@ def generate_latex_fila(data, df_full, fila="A"):
             ]
             
             if not df_filtered.empty:
-                # 1. Mappatura Livello Numerico -> Lettera
+                s_key = f"nav_{eid}_{v_idx}"
+                base_idx = st.session_state.preview_indices.get(s_key, 0)
+                actual_idx = base_idx + 1 if (current_logic == "B" and len(df_filtered) > 1) else base_idx
+                row = df_filtered.iloc[actual_idx % len(df_filtered)]
+
+                col_sol = next((c for c in df_filtered.columns if 'soluzione' in c), None)
                 mappa_livelli = {1: "A", 2: "B", 3: "C", 4: "D", 5: "E"}
                 livello_num = int(var['livello'])
-                livello_lettera = mappa_livelli.get(livello_num, "A") # Default A per sicurezza
-                
-                # 2. Logica Asterisco: solo se livello è 1 (A) e asterisco è attivo nel progetto
-                # Se il livello è > 1, l'asterisco non deve mai apparire
-                stringa_asterisco = ""
-                if data.get('asterisco', False) and livello_num == 1:
-                    stringa_asterisco = "*"
+                stringa_asterisco = "*" if (data.get('asterisco', False) and livello_num == 1) else ""
 
-                # Recupero l'indice dall'anteprima (navigazione V2)
-                s_key = f"nav_{eid}_{v_idx}"
-                idx_sel = st.session_state.preview_indices.get(s_key, 0)
-                
-                # Fila B: prende l'esercizio successivo nel database
-                actual_idx = (idx_sel + 1) % len(df_filtered) if fila == "B" and len(df_filtered) > 1 else idx_sel % len(df_filtered)
-                
-                row = df_filtered.iloc[actual_idx]
-                
-                # 3. Sostituzione nel template
-                v_out = var_block_tmpl.replace("{LVL}", f"[{livello_lettera}]")
+                used_images.update(re.findall(img_pattern, str(row['comando'])))
+                used_images.update(re.findall(img_pattern, str(row['esercizio'])))
+                if col_sol: used_images.update(re.findall(img_pattern, str(row[col_sol])))
+
+                v_out = var_block_tmpl.replace("{LVL}", f"[{mappa_livelli.get(livello_num, 'A')}]")
                 v_out = v_out.replace("{ASR}", stringa_asterisco)
                 v_out = v_out.replace("{CMD}", str(row['comando']).replace('\\n', '\n'))
                 v_out = v_out.replace("{ESR}", str(row['esercizio']).replace('\\n', '\n'))
                 v_out = v_out.replace("PNT", str(var['punti']))
+                
+                if is_correttore:
+                    sol_val = str(row[col_sol]).replace('\\n', '\n') if col_sol and pd.notna(row[col_sol]) else "Soluzione non disponibile"
+                    v_out = v_out.replace("{SOL}", sol_val)
                 vars_text += v_out
 
-        # Inserimento varianti nel blocco esercizio
-        ex_out = ex_block_tmpl.replace(var_match.group(0), vars_text)
-        all_exercises_text += ex_out
+        all_exercises_text += ex_block_tmpl.replace(var_match.group(0), vars_text)
 
-    # Inserimento finale nel template
-    return final_tex.replace(ex_match.group(0), all_exercises_text)
+    return final_tex.replace(ex_match.group(0), all_exercises_text), used_images
 
 # --- GESTIONE STATO INIZIALE ---
 if 'db_esercizi' not in st.session_state:
-    st.session_state.db_esercizi = load_local_db()
+    st.session_state.db_esercizi = None
 
 if 'app_mode' not in st.session_state:
     st.session_state.app_mode = "START" 
@@ -251,19 +311,26 @@ elif st.session_state.app_mode == "ACTIVE":
     if st.session_state.db_esercizi is not None:
         df_full = st.session_state.db_esercizi
 
-        # --- INTESTAZIONE ---
+        # --- INTESTAZIONE AGGIORNATA ---
         st.header("⚙️ Intestazione")
         with st.container(border=True):
-            c1, c2, c3, c4, c5 = st.columns(5)
+            # Passiamo a 6 colonne per includere l'Istituto
+            c1, c2, c3, c4, c5, c6 = st.columns(6)
             with c1:
                 st.text_input("🎯 Disciplina", value=data.get('disciplina', ""), disabled=True)
                 df_disc = df_full[df_full['disciplina'] == data['disciplina']]
-            with c2: data['idver'] = st.text_input("ID Verifica", data.get('idver', ""))
-            with c3:
+            with c2:
+                # Nuovo campo Istituto
+                data['istituto'] = st.text_input("🏢 Istituto", data.get('istituto', "IIS Casimiri"), disabled=False)
+            with c3: 
+                data['idver'] = st.text_input("ID Verifica", data.get('idver', ""))
+            with c4:
                 cl_opts = [1, 2, 3, 4, 5]
                 data['classe'] = st.selectbox("Classe", cl_opts, index=cl_opts.index(data.get('classe', 1)) if data.get('classe') in cl_opts else 0)
-            with c4: data['idtemplate'] = st.number_input("ID Template", value=data.get('idtemplate', 1))
-            with c5: data['asterisco'] = st.checkbox("Asterisco (DSA)", value=data.get('asterisco', True))
+            with c5: 
+                data['idtemplate'] = st.number_input("ID Template", value=data.get('idtemplate', 1))
+            with c6: 
+                data['asterisco'] = st.checkbox("Asterisco (DSA)", value=data.get('asterisco', True))
 
         st.divider()
 
@@ -371,41 +438,143 @@ elif st.session_state.app_mode == "ACTIVE":
         if st.button("➕ Aggiungi Nuovo Esercizio", key="add_down"):
             add_new_exercise(data)
 
-        # --- EXPORT ---
+        # --- EXPORT E SALVATAGGIO VERSIONE 6 (DEFINITIVA) ---
         st.divider()
-        st.subheader("📦 Esportazione")
+        st.subheader("📦 Esportazione e Salvataggio")
 
-        if st.button("🎁 GENERA PACCHETTO ZIP (FILA A + B + JSON)", type="primary", use_container_width=True):
-            # Generiamo i testi LaTeX
-            tex_a = generate_latex_fila(data, df_full, fila="A")
-            tex_b = generate_latex_fila(data, df_full, fila="B")
-            
-            # Recuperiamo i dati per il nome file
-            id_v = data.get('idver', '11')
-            cl = data.get('classe', '1')
-            disc = data.get('disciplina', 'Materia').replace(" ", "_").lower() # Sostituisce spazi con _
-            
-            # Pattern base del nome: disciplina_classe_idver
-            base_name = f"{disc}_{cl}_{id_v}"
-            
-            # Creiamo il buffer per lo ZIP
-            zip_buffer = io.BytesIO()
-            with zipfile.ZipFile(zip_buffer, "w") as zf:
-                # File LaTeX
-                zf.writestr(f"verifica_{base_name}_FILA_A.tex", tex_a)
-                zf.writestr(f"verifica_{base_name}_FILA_B.tex", tex_b)
+        # Prepariamo i nomi file standard basati sui dati della verifica
+        id_v = data.get('idver', '11')
+        cl = data.get('classe', '1')
+        disc = data.get('disciplina', 'Materia').replace(" ", "_").lower()
+        base_name = f"{disc}_{cl}_{id_v}"
+
+        # 1. SALVATAGGIO PROGETTO (JSON) - Sempre visibile
+        st.download_button(
+            label="💾 SALVA PROGETTO (.json)",
+            data=json.dumps(data, indent=4, default=json_serialize_helper),
+            file_name=f"progetto_{base_name}.json",
+            mime="application/json",
+            use_container_width=True,
+            help="Scarica questo file per poter ricaricare l'intera configurazione in futuro."
+        )
+
+        st.write("") # Spaziatore
+
+        # 2. STEP 1: GENERAZIONE PACCHETTO LATEX (Aggiornato V7) ---
+        if st.button("🎁 GENERA PACCHETTO LATEX (VERIFICHE + CORRETTORI)", type="primary", use_container_width=True):
+            with st.spinner("Generazione 4 verifiche e 2 correttori in corso..."):
+                # 1. Generazione Verifiche
+                tex_a, imgs_a = generate_latex_fila(data, df_full, fila="A")
+                tex_b, imgs_b = generate_latex_fila(data, df_full, fila="B")
+                tex_c, imgs_c = generate_latex_fila(data, df_full, fila="C")
+                tex_d, imgs_d = generate_latex_fila(data, df_full, fila="D")
                 
-                # File JSON
-                json_string = json.dumps(data, indent=4, ensure_ascii=False, default=json_serialize_helper)
-                zf.writestr(f"configurazione_{base_name}.json", json_string)
+                # 2. Generazione Correttori (Solo A e B)
+                corr_a, imgs_ca = generate_latex_fila(data, df_full, fila="A", is_correttore=True)
+                corr_b, imgs_cb = generate_latex_fila(data, df_full, fila="B", is_correttore=True)
+                
+                # Unione immagini
+                tutte_immagini = imgs_a | imgs_b | imgs_c | imgs_d | imgs_ca | imgs_cb
+                
+                zip_buf = io.BytesIO()
+                with zipfile.ZipFile(zip_buf, "w") as zf:
+                    # Scrittura Verifiche
+                    for let, content in zip(["A", "B", "C", "D"], [tex_a, tex_b, tex_c, tex_d]):
+                        zf.writestr(f"verifica_{base_name}_FILA_{let}.tex", content)
+                    
+                    # Scrittura Correttori
+                    zf.writestr(f"correttore_{base_name}_FILA_A.tex", corr_a)
+                    zf.writestr(f"correttore_{base_name}_FILA_B.tex", corr_b)
+                    
+                    # Scrittura Immagini
+                    for img_n in tutte_immagini:
+                        for est in ['.png', '.jpg', '.jpeg', '.svg']:
+                            f_path = os.path.join("images", img_n + est)
+                            if os.path.exists(f_path):
+                                zf.write(f_path, arcname=os.path.join("images", img_n + est))
+                                break
+                
+                st.session_state.current_latex_zip = zip_buf.getvalue()
+                st.session_state.current_base_name = base_name
+                st.session_state.latex_ready = True
+                st.session_state.pdf_ready = False
+                st.rerun()
+
+        # 3. STEP 2: SCARICA LATEX O GENERA PDF (Visibili solo dopo lo Step 1)
+        if st.session_state.get('latex_ready'):
+            st.info("✅ Pacchetto sorgente pronto!")
+            c1, c2 = st.columns(2)
             
-            st.success(f"Pacchetto per {data['disciplina']} (Classe {cl}) generato!")
+            with c1:
+                st.download_button(
+                    "💾 SCARICA LATEX (.zip)", 
+                    st.session_state.current_latex_zip, 
+                    f"sorgenti_{st.session_state.current_base_name}.zip", 
+                    "application/zip",
+                    use_container_width=True
+                )
+            
+            with c2:
+                if st.button("🚀 GENERA PDF (Online)", type="secondary", use_container_width=True):
+                    import threading
+                    API_URL = "https://compiletex.onrender.com/compile-multiple"
+                    TIMEOUT_MAX = 120
+                    
+                    # Estraiamo i dati PRIMA del thread per evitare l'errore di attributo
+                    zip_data = st.session_state.current_latex_zip
+                    b_name = st.session_state.current_base_name
+                    
+                    prog_bar = st.progress(0)
+                    status_msg = st.empty()
+                    response_container = {"data": None, "error": None, "done": False}
+
+                    # Funzione aggiornata che accetta parametri esterni
+                    def call_api(payload, filename):
+                        try:
+                            files = {"file": (f"{filename}.zip", payload, "application/zip")}
+                            res = requests.post(API_URL, files=files, timeout=TIMEOUT_MAX)
+                            response_container["data"] = res
+                        except Exception as e:
+                            response_container["error"] = str(e)
+                        finally:
+                            response_container["done"] = True
+
+                    # Passiamo i dati al thread tramite 'args'
+                    api_thread = threading.Thread(target=call_api, args=(zip_data, b_name))
+                    api_thread.start()
+
+                    # --- CICLO DI AVANZAMENTO (Invariato) ---
+                    start_time = time.time()
+                    while not response_container["done"]:
+                        elapsed = time.time() - start_time
+                        percent = min(int((elapsed / TIMEOUT_MAX) * 100), 99)
+                        prog_bar.progress(percent)
+                        status_msg.info(f"⏳ Compilazione in corso... ({percent}%)")
+                        time.sleep(1)
+                        if elapsed > TIMEOUT_MAX: break
+
+                    # --- SPRINT FINALE ---
+                    if response_container["done"] and response_container["data"]:
+                        res = response_container["data"]
+                        if res.status_code == 200:
+                            prog_bar.progress(100)
+                            status_msg.success("🚀 Processo terminato!.")
+                            st.session_state.current_pdf_zip = res.content
+                            st.session_state.pdf_ready = True
+                            time.sleep(1)
+                            st.rerun()
+                        else:
+                            status_msg.error(f"❌ Errore server: {res.status_code}")
+                    elif response_container["error"]:
+                        status_msg.error(f"⚠️ Errore connessione: {response_container['error']}")
+                        
+        # 4. STEP 3: DOWNLOAD FINALE PDF (Visibile solo dopo lo Step 2)
+        if st.session_state.get('pdf_ready'):
+            st.success("✨ PDF compilati con successo!")
             st.download_button(
-                label="💾 SCARICA ARCHIVIO ZIP",
-                data=zip_buffer.getvalue(),
-                file_name=f"verifica_{base_name}_pack.zip",
+                label="📥 SCARICA PDF (.zip)",
+                data=st.session_state.current_pdf_zip,
+                file_name=f"verifiche_{st.session_state.current_base_name}_PDF.zip",
                 mime="application/zip",
                 use_container_width=True
-    )
-    else:
-        st.error(f"File {CSV_FILENAME} non trovato.")
+            )
