@@ -14,8 +14,10 @@ from googleapiclient.discovery import build
 from google.oauth2 import service_account
 
 # --- CONFIGURAZIONE DRIVE ---
-# Inserisci qui l'ID della cartella che contiene i file .tex
-FOLDER_ID_TEMPLATES = "1NW3yw4mluwS518DVyHh2OznGP-m87inQ"
+FOLDER_ID_TEMPLATES = st.secrets.get("TEMPLATE_FOLDER_ID", "")
+
+if not FOLDER_ID_TEMPLATES:
+    st.error("⚠️ Errore: TEMPLATE_FOLDER_ID non trovato nei secrets!")
 
 def json_serialize_helper(obj):
     if isinstance(obj, (np.int64, np.int32)):
@@ -57,19 +59,25 @@ def load_templates_from_drive():
         st.error(f"❌ Errore nel caricamento template da Drive: {e}")
         return {}
 
-# INIZIALIZZAZIONE DEGLI STATI (Aggiornata)
-if 'latex_ready' not in st.session_state:
-    st.session_state.latex_ready = False
-if 'pdf_ready' not in st.session_state:
-    st.session_state.pdf_ready = False
-if 'current_latex_zip' not in st.session_state:
-    st.session_state.current_latex_zip = None
-if 'current_pdf_zip' not in st.session_state:
-    st.session_state.current_pdf_zip = None
-if 'current_base_name' not in st.session_state:
-    st.session_state.current_base_name = "verifica"
-if 'db_esercizi' not in st.session_state:
-    st.session_state.db_esercizi = None
+st.set_page_config(page_title="Configuratore Verifiche v0.2", layout="wide")
+
+# --- INIZIALIZZAZIONE DEGLI STATI (BLINDATA) ---
+# Usiamo un ciclo per assicurarci che tutte le chiavi esistano all'avvio
+keys_to_init = {
+    'latex_ready': False,
+    'pdf_ready': False,
+    'current_latex_zip': None,
+    'current_pdf_zip': None,
+    'current_base_name': "verifica",
+    'db_esercizi': None,
+    'app_mode': "START",
+    'data': None,
+    'preview_indices': {}
+}
+
+for key, default_value in keys_to_init.items():
+    if key not in st.session_state:
+        st.session_state[key] = default_value
 
 # Carichiamo i template all'avvio (Cache di 1 ora)
 templates_db = load_templates_from_drive()
@@ -517,56 +525,86 @@ elif st.session_state.app_mode == "ACTIVE":
             with c2:
                 if st.button("🚀 GENERA PDF (Online)", type="secondary", use_container_width=True):
                     import threading
-                    API_URL = "https://compiletex.onrender.com/compile-multiple"
-                    TIMEOUT_MAX = 120
+                    API_URL = "https://xfrancgh-compiletex.hf.space/compile-multiple"
+                    TIMEOUT_MAX = 180
                     
-                    # Estraiamo i dati PRIMA del thread per evitare l'errore di attributo
+                    # ESTRAZIONE DATI
                     zip_data = st.session_state.current_latex_zip
                     b_name = st.session_state.current_base_name
+                    
+                    # RECUPERO TOKEN
+                    # Se sei in locale, Streamlit cerca in .streamlit/secrets.toml
+                    hf_token = st.secrets.get("HF_TOKEN", "")
+                    #st.write(st.secrets.to_dict())
+                    
+                    # DEBUG: Vediamo se il token viene letto (mostriamo solo i primi 4 caratteri per sicurezza)
+                    # if not hf_token:
+                    #     st.error("⚠️ Attenzione: HF_TOKEN non trovato nei secrets!")
+                    # else:
+                    #     st.write(f"DEBUG: Token caricato (inizia con: {hf_token[:5]}...)")
                     
                     prog_bar = st.progress(0)
                     status_msg = st.empty()
                     response_container = {"data": None, "error": None, "done": False}
 
-                    # Funzione aggiornata che accetta parametri esterni
-                    def call_api(payload, filename):
+                    def call_api(payload, filename, token):
                         try:
+                            # MODIFICA 1: Usiamo l'header x-api-key come nel tuo test funzionante
+                            headers = {"x-api-key": token}
+                            
+                            # MODIFICA 2: Usiamo la chiave "file" al singolare
                             files = {"file": (f"{filename}.zip", payload, "application/zip")}
-                            res = requests.post(API_URL, files=files, timeout=TIMEOUT_MAX)
-                            response_container["data"] = res
+                            
+                            # Eseguiamo la POST all'URL di Hugging Face
+                            res = requests.post(
+                                API_URL, 
+                                files=files, 
+                                headers=headers, 
+                                timeout=TIMEOUT_MAX
+                            )
+                            
+                            if res.status_code != 200:
+                                # Catturiamo l'errore per il debug
+                                response_container["error"] = f"Errore {res.status_code}: {res.text}"
+                            else:
+                                response_container["data"] = res
                         except Exception as e:
                             response_container["error"] = str(e)
                         finally:
                             response_container["done"] = True
 
-                    # Passiamo i dati al thread tramite 'args'
-                    api_thread = threading.Thread(target=call_api, args=(zip_data, b_name))
+                    # Passiamo il token come argomento
+                    api_thread = threading.Thread(target=call_api, args=(zip_data, b_name, hf_token))
                     api_thread.start()
 
-                    # --- CICLO DI AVANZAMENTO (Invariato) ---
+                    # --- CICLO DI AVANZAMENTO ---
                     start_time = time.time()
                     while not response_container["done"]:
+                        # Se il thread ha registrato un errore, usciamo subito dal loop
+                        if response_container["error"]:
+                            break
+                            
                         elapsed = time.time() - start_time
                         percent = min(int((elapsed / TIMEOUT_MAX) * 100), 99)
                         prog_bar.progress(percent)
                         status_msg.info(f"⏳ Compilazione in corso... ({percent}%)")
                         time.sleep(1)
-                        if elapsed > TIMEOUT_MAX: break
+                        if elapsed > TIMEOUT_MAX: 
+                            response_container["error"] = "Timeout della richiesta"
+                            break
 
-                    # --- SPRINT FINALE ---
-                    if response_container["done"] and response_container["data"]:
+                    # --- GESTIONE RISULTATO ---
+                    if response_container["error"]:
+                        prog_bar.empty()
+                        status_msg.error(f"⚠️ {response_container['error']}")
+                    elif response_container["done"] and response_container["data"]:
                         res = response_container["data"]
-                        if res.status_code == 200:
-                            prog_bar.progress(100)
-                            status_msg.success("🚀 Processo terminato!.")
-                            st.session_state.current_pdf_zip = res.content
-                            st.session_state.pdf_ready = True
-                            time.sleep(1)
-                            st.rerun()
-                        else:
-                            status_msg.error(f"❌ Errore server: {res.status_code}")
-                    elif response_container["error"]:
-                        status_msg.error(f"⚠️ Errore connessione: {response_container['error']}")
+                        prog_bar.progress(100)
+                        status_msg.success("🚀 PDF generati!")
+                        st.session_state.current_pdf_zip = res.content
+                        st.session_state.pdf_ready = True
+                        time.sleep(1)
+                        st.rerun()
                         
         # 4. STEP 3: DOWNLOAD FINALE PDF (Visibile solo dopo lo Step 2)
         if st.session_state.get('pdf_ready'):
