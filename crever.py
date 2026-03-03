@@ -156,37 +156,50 @@ def add_new_exercise(data_store):
 
 # --- GENERAZIONE LATEX (MODIFICATA PER USARE DRIVE) ---
 def generate_latex_fila(data, df_full, fila="A", is_correttore=False):
-    # Selezione del template dal dizionario caricato da Drive
+    # 1. SELEZIONE DEL TEMPLATE
     if is_correttore:
         file_target = "tcorr.tex"
     else:
         id_t = data.get('idtemplate', 1)
         file_target = f"tver_{id_t}.tex"
     
-    # Recuperiamo il testo dal database dei template caricato all'avvio
-    template = templates_db.get(file_target)
-    
-    if not template:
+    # Recuperiamo il testo dal database caricato all'avvio
+    template_content = templates_db.get(file_target)
+    if not template_content:
         return f"ERRORE: Template '{file_target}' non trovato su Google Drive.", set()
 
-    # Sostituzioni globali
-    final_tex = template.replace("IDV", str(data.get('idver', '11')))
-    final_tex = final_tex.replace("{MAT}", str(data.get('disciplina', 'Materia')))
-    final_tex = final_tex.replace("{IST}", str(data.get('istituto', 'Istituto')))
-    final_tex = final_tex.replace("{FILA}", fila)
+    final_tex = template_content
 
+    # 2. SOSTITUZIONI GLOBALI (Nuovi placeholder [[...]])
+    replacements = {
+        "[[ID_VERIFICA]]": str(data.get('idver', '')),
+        "[[DISCIPLINA]]": str(data.get('disciplina', '')),
+        "[[ISTITUTO]]": str(data.get('istituto', '')),
+        "[[CLASSE]]": str(data.get('classe', '')),
+        "[[ANNOSC]]": str(data.get('annosc', '')),
+        "[[ISTRUZIONI]]": str(data.get('istruzioni', '')).replace('\\n', '\n'),
+        "[[FILA]]": fila,
+        "[[DATA]]": "................" 
+    }
+
+    for placeholder, value in replacements.items():
+        final_tex = final_tex.replace(placeholder, value)
+
+    # 3. RICERCA BLOCCHI (Marcatori %<<...>>)
     try:
         ex_match = re.search(r'%<<SECESR>>(.*?)%<<SECESR>>', final_tex, re.DOTALL)
         ex_block_tmpl = ex_match.group(1)
         var_match = re.search(r'%<<SECTPL>>(.*?)%<<SECTPL>>', ex_block_tmpl, re.DOTALL)
         var_block_tmpl = var_match.group(1)
-    except:
-        return "ERRORE: Marcatori %<<...>> non trovati nel template.", set()
+    except Exception:
+        return f"ERRORE: Marcatori non trovati nel template {file_target}.", set()
 
     all_exercises_text = ""
     used_images = set()
     img_pattern = r'\\includegraphics(?:\[.*?\])?\{(.*?)\}'
+    mappa_livelli = {1: "A", 2: "B", 3: "C", 4: "D", 5: "E"}
 
+    # 4. CICLO ESERCIZI (Logica v0.2 intatta)
     for i_es, es in enumerate(data['esercizi']):
         if fila == "A": current_logic = "A"
         elif fila == "B": current_logic = "B"
@@ -195,6 +208,7 @@ def generate_latex_fila(data, df_full, fila="A", is_correttore=False):
 
         eid = es['id_es']
         vars_text = ""
+        
         for v_idx, var in enumerate(es['tipologia']):
             df_filtered = df_full[
                 (df_full['disciplina'] == data['disciplina']) &
@@ -205,35 +219,44 @@ def generate_latex_fila(data, df_full, fila="A", is_correttore=False):
             ]
             
             if not df_filtered.empty:
+                # Gestione indici preview e varianti fila B
                 s_key = f"nav_{eid}_{v_idx}"
                 base_idx = st.session_state.preview_indices.get(s_key, 0)
                 actual_idx = base_idx + 1 if (current_logic == "B" and len(df_filtered) > 1) else base_idx
                 row = df_filtered.iloc[actual_idx % len(df_filtered)]
 
-                col_sol = next((c for c in df_filtered.columns if 'soluzione' in c), None)
-                mappa_livelli = {1: "A", 2: "B", 3: "C", 4: "D", 5: "E"}
                 livello_num = int(var['livello'])
                 stringa_asterisco = "*" if (data.get('asterisco', False) and livello_num == 1) else ""
 
+                # Raccolta immagini (comando ed esercizio)
                 used_images.update(re.findall(img_pattern, str(row['comando'])))
                 used_images.update(re.findall(img_pattern, str(row['esercizio'])))
-                if col_sol: used_images.update(re.findall(img_pattern, str(row[col_sol])))
 
-                v_out = var_block_tmpl.replace("{LVL}", f"[{mappa_livelli.get(livello_num, 'A')}]")
-                v_out = v_out.replace("{ASR}", stringa_asterisco)
-                v_out = v_out.replace("{CMD}", str(row['comando']).replace('\\n', '\n'))
-                v_out = v_out.replace("{ESR}", str(row['esercizio']).replace('\\n', '\n'))
-                v_out = v_out.replace("PNT", str(var['punti']))
+                # --- SOSTITUZIONE NEL BLOCCO VARIANTE (SECTPL) ---
+                v_out = var_block_tmpl.replace("[[LIVELLO]]", f"[{mappa_livelli.get(livello_num, 'A')}]")
+                v_out = v_out.replace("[[ASTERISCO]]", stringa_asterisco)
+                v_out = v_out.replace("[[COMANDO]]", str(row['comando']).replace('\\n', '\n'))
+                v_out = v_out.replace("[[TESTO_ESERCIZIO]]", str(row['esercizio']).replace('\\n', '\n'))
+                v_out = v_out.replace("[[PUNTI]]", str(var['punti']))
                 
+                # Se è il correttore, aggiungiamo la soluzione
                 if is_correttore:
-                    sol_val = str(row[col_sol]).replace('\\n', '\n') if col_sol and pd.notna(row[col_sol]) else "Soluzione non disponibile"
-                    v_out = v_out.replace("{SOL}", sol_val)
+                    col_sol = next((c for c in df_filtered.columns if 'soluzione' in c), None)
+                    sol_val = str(row[col_sol]).replace('\\n', '\n') if col_sol and pd.notna(row[col_sol]) else "N/D"
+                    v_out = v_out.replace("[[SOLUZIONE]]", sol_val)
+                    if col_sol: 
+                        used_images.update(re.findall(img_pattern, sol_val))
+                
                 vars_text += v_out
 
+        # Ricomposizione blocco esercizio (SECESR)
         all_exercises_text += ex_block_tmpl.replace(var_match.group(0), vars_text)
 
-    return final_tex.replace(ex_match.group(0), all_exercises_text), used_images
-
+    # Inserimento finale nel corpo del documento
+    final_output = final_tex.replace(ex_match.group(0), all_exercises_text)
+    
+    return final_output, used_images
+    
 # --- GESTIONE STATO INIZIALE ---
 if 'db_esercizi' not in st.session_state:
     st.session_state.db_esercizi = None
