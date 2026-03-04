@@ -179,7 +179,7 @@ def generate_latex_fila(data, df_full, fila="A", is_correttore=False):
         "[[ANNOSC]]": str(data.get('annosc', '')),
         "[[ISTRUZIONI]]": str(data.get('istruzioni', '')).replace('\\n', '\n'),
         "[[FILA]]": fila,
-        "[[DATA]]": "................" 
+        "[[DOCENTE]]": str(data.get('docente', '')) 
     }
 
     for placeholder, value in replacements.items():
@@ -345,24 +345,39 @@ elif st.session_state.app_mode == "ACTIVE":
         # --- INTESTAZIONE AGGIORNATA ---
         st.header("⚙️ Intestazione")
         with st.container(border=True):
-            # Passiamo a 6 colonne per includere l'Istituto
-            c1, c2, c3, c4, c5, c6 = st.columns(6)
+            # Prima riga
+            c1, c2, c3, c4 = st.columns([1, 1, 1, 1])
             with c1:
                 st.text_input("🎯 Disciplina", value=data.get('disciplina', ""), disabled=True)
                 df_disc = df_full[df_full['disciplina'] == data['disciplina']]
             with c2:
-                # Nuovo campo Istituto
                 data['istituto'] = st.text_input("🏢 Istituto", data.get('istituto', "IIS Casimiri"), disabled=False)
             with c3: 
-                data['idver'] = st.text_input("ID Verifica", data.get('idver', ""))
-            with c4:
                 cl_opts = [1, 2, 3, 4, 5]
-                data['classe'] = st.selectbox("Classe", cl_opts, index=cl_opts.index(data.get('classe', 1)) if data.get('classe') in cl_opts else 0)
-            with c5: 
-                data['idtemplate'] = st.number_input("ID Template", value=data.get('idtemplate', 1))
-            with c6: 
-                data['asterisco'] = st.checkbox("Asterisco (DSA)", value=data.get('asterisco', True))
+                data['classe'] = st.selectbox("👥 Classe", cl_opts, index=cl_opts.index(data.get('classe', 1)) if data.get('classe') in cl_opts else 0)
+            with c4:
+                data['annosc'] = st.text_input("📅 Anno Scolastico", value=data.get('annosc', "2025-26"))
+                            
+            # Seconda riga
+            c5, c6, c7, c8 = st.columns([1, 1, 1, 1])
+            with c5:
+                data['idver'] = st.text_input("🆔 ID Verifica", data.get('idver', ""))
+            with c6:
+                tm_opts = [1, 2, 3, 4, 5]
+                data['idtemplate'] = st.selectbox("📄 ID Template", tm_opts, index=tm_opts.index(data.get('idtemplate', 1)) if data.get('idtemplate') in tm_opts else 0)
+            with c7:
+                data['docente'] = st.text_input("🆔 Docente", data.get('docente', ""))
+            with c8:
+                st.write("") # Spaziatore
+                data['asterisco'] = st.checkbox("⭐ Asterisco (DSA)", value=data.get('asterisco', True))
 
+            # Terza riga: Istruzioni
+            st.divider()
+            data['istruzioni'] = st.text_area(
+                "📝 Istruzioni per gli studenti (Placeholder [[ISTRUZIONI]])", 
+                value=data.get('istruzioni', ""),
+                height=120
+            )
         st.divider()
 
         # --- CORPO ESERCIZI ---
