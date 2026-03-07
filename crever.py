@@ -3,13 +3,12 @@ import json
 import pandas as pd
 import os
 import time
-import numpy as np # Assicurati di averlo tra gli import
+import numpy as np
 import zipfile
 import io
-import re        # Già presente
-import requests  # <--- AGGIUNGI QUESTA RIGA
+import re
+import requests
 from streamlit_gsheets import GSheetsConnection
-# --- NUOVI IMPORT PER GOOGLE DRIVE ---
 from googleapiclient.discovery import build
 from google.oauth2 import service_account
 
@@ -25,6 +24,51 @@ def json_serialize_helper(obj):
     if isinstance(obj, (np.float64, np.float32)):
         return float(obj)
     raise TypeError(f"Object of type {obj.__class__.__name__} is not JSON serializable")
+
+def parse_image_field(value):
+    """
+    Estrae URL e nome file da una stringa tipo: 
+    IMAGE("https://i.ibb.co/XxdrLNZz/id-81.png") o semplicemente l'URL.
+    """
+    v = str(value)
+    # Cerca il primo URL valido nella stringa
+    match = re.search(r'https?://[^\s"\'\)]+', v)
+    if match:
+        url = match.group(0)
+        filename = url.split('/')[-1] # es: id-81.png
+        return url, filename
+    return None, None
+
+def download_image_from_url(url):
+    """Scarica l'immagine e restituisce i byte."""
+    try:
+        response = requests.get(url, timeout=10)
+        if response.status_code == 200:
+            return response.content
+    except Exception as e:
+        st.error(f"Errore download immagine {url}: {e}")
+    return None
+
+# def get_raw_image_url(id_esercizio):
+#     """
+#     Legge direttamente la formula della cella dal foglio Google 
+#     usando gspread, bypassando l'interpretazione NaN di Pandas.
+#     """
+#     try:
+#         # Recupera il client gspread che hai già configurato in sheetMGR.py
+#         # Assicurati che la funzione di autenticazione sia visibile qui
+#         client = get_gspread_client() 
+#         sheet = client.open_by_url(SPREADSHEET_URL).sheet1
+        
+#         # Cerca la riga dove l'ID corrisponde (supponendo colonna A/1)
+#         cell = sheet.find(str(id_esercizio))
+#         if cell:
+#             # Legge la colonna 3 (IMMAGINE), basandosi sull'indice del tuo foglio
+#             formula = sheet.cell(cell.row, 3).value
+#             return formula
+#     except Exception as e:
+#         st.error(f"Errore lettura gspread: {e}")
+#     return None
 
 st.set_page_config(page_title="Configuratore Verifiche", layout="wide")
 
@@ -91,6 +135,12 @@ try:
     if 'livello' in df_full.columns:
         df_full['livello'] = pd.to_numeric(df_full['livello'], errors='coerce').fillna(0).astype(int)
     st.session_state.db_esercizi = df_full
+    # st.write("DEBUG: Colonne presenti in df_full:", df_full.columns.tolist())
+    # sample_val = df_full['immagine'].iloc[0] # Prendi la prima riga
+    # url, name = parse_image_field(sample_val)
+    # st.write(f"DEBUG: Input originale: {sample_val}")
+    # st.write(f"DEBUG: URL estratto: {url}")
+    # st.write(f"DEBUG: Nome file estratto: {name}")
 except Exception as e:
     st.error("❌ Errore durante il collegamento a Google Sheets.")
     st.exception(e)
@@ -98,54 +148,45 @@ except Exception as e:
 
 # Da qui in poi il codice prosegue usando st.session_state.db_esercizi
 
-def render_preview(testo_raw):
-    if pd.isna(testo_raw) or testo_raw == "" or str(testo_raw).lower() == "nan": 
+def render_preview(row):
+    """
+    Renderizza il testo LaTeX e l'immagine associata (da URL o locale).
+    Accetta l'intera riga (row) del DataFrame per avere accesso a 'IMMAGINE'.
+    """
+    comando_raw = row.get('comando', '')
+    if pd.isna(comando_raw) or str(comando_raw).lower() == "nan":
         return
-    
-    testo = str(testo_raw).strip()
-    if testo.startswith('"') and testo.endswith('"'): 
-        testo = testo[1:-1]
-    
-    testo = testo.replace('\\n', '\n')
-    testo = re.sub(r'\\begin\{center\}|\\end\{center\}', '', testo)
+    # --- 1. Rendering del Testo (pulizia base) ---
+    comando = str(comando_raw).replace('\\n', '\n')
+    comando = re.sub(r'\\begin\{center\}|\\end\{center\}', '', comando)
+    st.markdown(comando)
 
-    # --- LOGICA GESTIONE IMMAGINI ---
-    # Cerchiamo il pattern \includegraphics[...]{nome_file} o \includegraphics{nome_file}
-    # Il pattern identifica il contenuto dentro le ultime parentesi graffe
-    pattern_img = r'\\includegraphics(?:\[.*?\])?\{(.*?)\}'
+    esercizio_rav = row.get('esercizio', '')
+    if pd.isna(esercizio_rav) or str(esercizio_rav).lower() == "nan":
+        return
+    # --- 1. Rendering del Testo (pulizia base) ---
+    esercizio = str(esercizio_rav).replace('\\n', '\n')
+    esercizio = re.sub(r'\\begin\{center\}|\\end\{center\}', '', esercizio)
+    st.markdown(esercizio)
+
+    # --- 2. Gestione Immagine (la vera modifica v0.4) ---
+    valore_img = row.get('immagine') # O 'immagine', verifica il nome colonna
     
-    # Dividiamo il testo per processarlo: cerchiamo se ci sono riferimenti a immagini
-    parts = re.split(pattern_img, testo)
-    
-    # Se re.split trova il pattern, le parti dispari della lista saranno i nomi dei file
-    # Esempio: ["Testo prima", "nome_immagine", "Testo dopo"]
-    for i, part in enumerate(parts):
-        if i % 2 == 0:
-            # Testo normale (renderizziamo LaTeX inline se presente)
-            if part.strip():
-                st.markdown(part)
+    if pd.notna(valore_img) and str(valore_img).strip() != "":
+        url, filename = parse_image_field(valore_img)
+        if url:
+            st.image(url, width=300, caption=f"Immagine: {filename}")
         else:
-            # È un nome di immagine
-            nome_file = part.strip()
-            # Proviamo diverse estensioni comuni
-            estensioni = ['.png', '.jpg', '.jpeg', '.svg']
-            found = False
-            
-            for est in estensioni:
-                path_completo = os.path.join("images", nome_file + est)
-                if os.path.exists(path_completo):
-                    # Mostriamo l'immagine. 
-                    # use_container_width=True la adatta alla colonna dell'anteprima
-                    st.image(path_completo, caption=f"Immagine: {nome_file}")
-                    found = True
-                    break
-            
-            if not found:
-                st.warning(f"⚠️ Immagine non trovata: {nome_file} (controlla la cartella /immagini)")
+            # Fallback: prova a vedere se esiste ancora localmente (retrocompatibilità)
+            st.warning(f"Immagine non trovata su imgBB. URL estratto: {url}")
 
-    # Rimuoviamo eventuali tag LaTeX di posizionamento rimasti (tipo \begin{center}) 
-    # che darebbero fastidio alla lettura
-    # (Opzionale: puoi aggiungere regex per pulire anche quelli)
+    soluzione_raw = row.get('soluzione', '')
+    if pd.isna(soluzione_raw) or str(soluzione_raw).lower() == "nan":
+        return
+    # --- 1. Rendering del Testo (pulizia base) ---
+    soluzione = str(soluzione_raw).replace('\\n', '\n')
+    soluzione = re.sub(r'\\begin\{center\}|\\end\{center\}', '', soluzione)
+    st.markdown(soluzione)
 
 def add_new_exercise(data_store):
     unique_id = f"ex_{int(time.time() * 1000)}"
@@ -195,8 +236,8 @@ def generate_latex_fila(data, df_full, fila="A", is_correttore=False):
         return f"ERRORE: Marcatori non trovati nel template {file_target}.", set()
 
     all_exercises_text = ""
-    used_images = set()
-    img_pattern = r'\\includegraphics(?:\[.*?\])?\{(.*?)\}'
+    used_images = {} # Usiamo un dizionario {filename: url}
+    # img_pattern = r'\\includegraphics(?:\[.*?\])?\{(.*?)\}'
     mappa_livelli = {1: "A", 2: "B", 3: "C", 4: "D", 5: "E"}
 
     # 4. CICLO ESERCIZI (Logica v0.2 intatta)
@@ -228,9 +269,13 @@ def generate_latex_fila(data, df_full, fila="A", is_correttore=False):
                 livello_num = int(var['livello'])
                 stringa_asterisco = "*" if (data.get('asterisco', False) and livello_num == 1) else ""
 
-                # Raccolta immagini (comando ed esercizio)
-                used_images.update(re.findall(img_pattern, str(row['comando'])))
-                used_images.update(re.findall(img_pattern, str(row['esercizio'])))
+                # Raccolta immagini
+                # st.write(f"DEBUG: Controllo riga es {eid}, colonna IMMAGINE: {row.get('immagine')}")
+                valore_cella = row.get('immagine', "")
+                if pd.notna(valore_cella) and valore_cella != "":
+                    url, filename = parse_image_field(valore_cella)
+                    if url and filename:
+                        used_images[filename] = url
 
                 # --- SOSTITUZIONE NEL BLOCCO VARIANTE (SECTPL) ---
                 v_out = var_block_tmpl.replace("[[LIVELLO]]", f"[{mappa_livelli.get(livello_num, 'A')}]")
@@ -244,8 +289,12 @@ def generate_latex_fila(data, df_full, fila="A", is_correttore=False):
                     col_sol = next((c for c in df_filtered.columns if 'soluzione' in c), None)
                     sol_val = str(row[col_sol]).replace('\\n', '\n') if col_sol and pd.notna(row[col_sol]) else "N/D"
                     v_out = v_out.replace("[[SOLUZIONE]]", sol_val)
-                    if col_sol: 
-                        used_images.update(re.findall(img_pattern, sol_val))
+                    if col_sol:
+                        valore_cella = row.get('immagine', "")
+                        if pd.notna(valore_cella) and valore_cella != "":
+                            url, filename = parse_image_field(valore_cella)
+                            if url and filename:
+                                used_images[filename] = url                  
                 
                 vars_text += v_out
 
@@ -453,12 +502,8 @@ elif st.session_state.app_mode == "ACTIVE":
                                     st.session_state.preview_indices[state_key] += 1
                                     st.rerun()
                             with p2:
-                                render_preview(row['comando'])
-                                render_preview(row['esercizio'])
-                                col_sol = next((c for c in df_finale.columns if 'soluzione' in c), None)
-                                if col_sol and pd.notna(row[col_sol]):
-                                    with st.expander("🔎 Vedi Soluzione"): 
-                                        render_preview(row[col_sol])
+                                render_preview(row)
+
                     st.divider()
 
                 if st.button("✚ Variante", key=f"add_v_{eid}"):
@@ -510,20 +555,31 @@ elif st.session_state.app_mode == "ACTIVE":
         if st.button("🎁 GENERA PACCHETTO LATEX (VERIFICHE + CORRETTORI)", type="primary", use_container_width=True):
             with st.spinner("Generazione 4 verifiche e 2 correttori in corso..."):
                 # 1. Generazione Verifiche
+                tutte_immagini = {}
                 tex_a, imgs_a = generate_latex_fila(data, df_full, fila="A")
+                tutte_immagini.update(imgs_a) # Fondi le immagini della Fila A
                 tex_b, imgs_b = generate_latex_fila(data, df_full, fila="B")
+                tutte_immagini.update(imgs_b) # Fondi le immagini della Fila B
                 tex_c, imgs_c = generate_latex_fila(data, df_full, fila="C")
+                tutte_immagini.update(imgs_c) # Fondi le immagini della Fila C
                 tex_d, imgs_d = generate_latex_fila(data, df_full, fila="D")
+                tutte_immagini.update(imgs_d) # Fondi le immagini della Fila D
                 
                 # 2. Generazione Correttori (Solo A e B)
                 corr_a, imgs_ca = generate_latex_fila(data, df_full, fila="A", is_correttore=True)
+                tutte_immagini.update(imgs_ca)
                 corr_b, imgs_cb = generate_latex_fila(data, df_full, fila="B", is_correttore=True)
+                tutte_immagini.update(imgs_cb)
                 
                 # Unione immagini
-                tutte_immagini = imgs_a | imgs_b | imgs_c | imgs_d | imgs_ca | imgs_cb
+                # tutte_immagini = imgs_a | imgs_b | imgs_c | imgs_d | imgs_ca | imgs_cb
                 
+                # st.write("tutte_immagini:")
+                # st.write(tutte_immagini)
+                time.sleep(10)
+
                 zip_buf = io.BytesIO()
-                with zipfile.ZipFile(zip_buf, "w") as zf:
+                with zipfile.ZipFile(zip_buf, "w", zipfile.ZIP_DEFLATED) as zf:
                     # Scrittura Verifiche
                     for let, content in zip(["A", "B", "C", "D"], [tex_a, tex_b, tex_c, tex_d]):
                         zf.writestr(f"verifica_{base_name}_FILA_{let}.tex", content)
@@ -533,13 +589,13 @@ elif st.session_state.app_mode == "ACTIVE":
                     zf.writestr(f"correttore_{base_name}_FILA_B.tex", corr_b)
                     
                     # Scrittura Immagini
-                    for img_n in tutte_immagini:
-                        for est in ['.png', '.jpg', '.jpeg', '.svg']:
-                            f_path = os.path.join("images", img_n + est)
-                            if os.path.exists(f_path):
-                                zf.write(f_path, arcname=os.path.join("images", img_n + est))
-                                break
-                
+                    for filename, url in tutte_immagini.items():
+                        img_bytes = download_image_from_url(url)
+                        if img_bytes:
+                            zf.writestr(f"images/{filename}", img_bytes)
+                        else:
+                            st.warning(f"Immagine {filename} non scaricata: compilazione incompleta.")
+            
                 st.session_state.current_latex_zip = zip_buf.getvalue()
                 st.session_state.current_base_name = base_name
                 st.session_state.latex_ready = True
