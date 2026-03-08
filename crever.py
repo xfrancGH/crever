@@ -380,10 +380,24 @@ elif st.session_state.app_mode == "ACTIVE":
 
     st.sidebar.divider()
     if st.sidebar.button("🔄 Reset Totale", type="secondary", use_container_width=True):
-        for key in list(st.session_state.keys()):
-            if key.startswith("exp_"): del st.session_state[key]
-        st.session_state.app_mode = "START"
+        # 1. Pulisce la cache di Streamlit (forza il ricaricamento di Sheets e Drive)
+        st.cache_data.clear()
+        
+        # 2. Pulisce le variabili di stato che contengono i dati
+        st.session_state.db_esercizi = None
         st.session_state.data = None
+        st.session_state.current_latex_zip = None
+        st.session_state.current_pdf_zip = None
+        st.session_state.latex_ready = False
+        st.session_state.pdf_ready = False
+        
+        # 3. Rimuove le chiavi dinamiche create (expander, indici)
+        for key in list(st.session_state.keys()):
+            if key.startswith("exp_") or key.startswith("nav_"):
+                del st.session_state[key]
+        
+        # 4. Torna alla modalità iniziale
+        st.session_state.app_mode = "START"
         st.rerun()
 
     st.title("🚀 Configuratore Verifiche")
