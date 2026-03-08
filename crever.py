@@ -412,7 +412,7 @@ elif st.session_state.app_mode == "ACTIVE":
             with c5:
                 data['idver'] = st.text_input("🆔 ID Verifica", data.get('idver', ""))
             with c6:
-                tm_opts = [1, 2, 3, 4, 5]
+                tm_opts = [1, 2, 3, 4, 5, 6]
                 data['idtemplate'] = st.selectbox("📄 ID Template", tm_opts, index=tm_opts.index(data.get('idtemplate', 1)) if data.get('idtemplate') in tm_opts else 0)
             with c7:
                 data['docente'] = st.text_input("🆔 Docente", data.get('docente', ""))
