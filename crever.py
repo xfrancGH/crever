@@ -280,6 +280,7 @@ def generate_latex_fila(data, df_full, fila="A", is_correttore=False):
                 # --- SOSTITUZIONE NEL BLOCCO VARIANTE (SECTPL) ---
                 v_out = var_block_tmpl.replace("[[LIVELLO]]", f"[{mappa_livelli.get(livello_num, 'A')}]")
                 v_out = v_out.replace("[[ASTERISCO]]", stringa_asterisco)
+                v_out = v_out.replace("[[ID_ESERCIZIO]]", str(row['id']).replace('\\n', '\n'))
                 v_out = v_out.replace("[[COMANDO]]", str(row['comando']).replace('\\n', '\n'))
                 v_out = v_out.replace("[[TESTO_ESERCIZIO]]", str(row['esercizio']).replace('\\n', '\n'))
                 v_out = v_out.replace("[[PUNTI]]", str(var['punti']))
