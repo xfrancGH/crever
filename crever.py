@@ -11,6 +11,7 @@ import requests
 from streamlit_gsheets import GSheetsConnection
 from googleapiclient.discovery import build
 from google.oauth2 import service_account
+from latex_compiler.compiler import LatexCompiler
 
 # --- CONFIGURAZIONE DRIVE ---
 FOLDER_ID_TEMPLATES = st.secrets.get("TEMPLATE_FOLDER_ID", "")
@@ -632,89 +633,34 @@ elif st.session_state.app_mode == "ACTIVE":
                 )
             
             with c2:
-                if st.button("🚀 GENERA PDF (Online)", type="secondary", use_container_width=True):
-                    import threading
-                    API_URL = "https://xfrancgh-compiletex.hf.space/compile-multiple"
-                    TIMEOUT_MAX = 180
-                    
-                    # ESTRAZIONE DATI
-                    zip_data = st.session_state.current_latex_zip
-                    b_name = st.session_state.current_base_name
-                    
-                    # RECUPERO TOKEN
-                    # Se sei in locale, Streamlit cerca in .streamlit/secrets.toml
-                    hf_token = st.secrets.get("HF_TOKEN", "")
-                    #st.write(st.secrets.to_dict())
-                    
-                    # DEBUG: Vediamo se il token viene letto (mostriamo solo i primi 4 caratteri per sicurezza)
-                    # if not hf_token:
-                    #     st.error("⚠️ Attenzione: HF_TOKEN non trovato nei secrets!")
-                    # else:
-                    #     st.write(f"DEBUG: Token caricato (inizia con: {hf_token[:5]}...)")
-                    
-                    prog_bar = st.progress(0)
-                    status_msg = st.empty()
-                    response_container = {"data": None, "error": None, "done": False}
-
-                    def call_api(payload, filename, token):
+                # --- STEP 2: COMPILAZIONE (Sostituzione del vecchio blocco threading) ---
+                if st.button("🚀 GENERA PDF", type="secondary", use_container_width=True):
+                    if not st.session_state.get('latex_ready'):
+                        st.error("Devi prima generare i file LaTeX!")
+                    else:
                         try:
-                            # MODIFICA 1: Usiamo l'header x-api-key come nel tuo test funzionante
-                            headers = {"x-api-key": token}
-                            
-                            # MODIFICA 2: Usiamo la chiave "file" al singolare
-                            files = {"file": (f"{filename}.zip", payload, "application/zip")}
-                            
-                            # Eseguiamo la POST all'URL di Hugging Face
-                            res = requests.post(
-                                API_URL, 
-                                files=files, 
-                                headers=headers, 
-                                timeout=TIMEOUT_MAX
-                            )
-                            
-                            if res.status_code != 200:
-                                # Catturiamo l'errore per il debug
-                                response_container["error"] = f"Errore {res.status_code}: {res.text}"
-                            else:
-                                response_container["data"] = res
+                            with st.spinner("Compilazione in corso. Attendere..."):
+                                # Istanziamo il compilatore (legge latex_config.toml automaticamente)
+                                compiler = LatexCompiler()
+                                
+                                # Il metodo compile_zip restituisce i bytes del file .zip risultante
+                                # La logica di scelta del backend è tutta dentro la tua libreria!
+                                pdf_zip_bytes = compiler.compile_zip(
+                                    zip_input=st.session_state.current_latex_zip,
+                                    output_path=None # Non serve se vogliamo solo i bytes
+                                )
+                                
+                                # Successo!
+                                st.session_state.current_pdf_zip = pdf_zip_bytes
+                                st.session_state.pdf_ready = True
+                                st.success("✨ PDF compilati con successo!")
+                                time.sleep(1)
+                                st.rerun()
+                                
                         except Exception as e:
-                            response_container["error"] = str(e)
-                        finally:
-                            response_container["done"] = True
-
-                    # Passiamo il token come argomento
-                    api_thread = threading.Thread(target=call_api, args=(zip_data, b_name, hf_token))
-                    api_thread.start()
-
-                    # --- CICLO DI AVANZAMENTO ---
-                    start_time = time.time()
-                    while not response_container["done"]:
-                        # Se il thread ha registrato un errore, usciamo subito dal loop
-                        if response_container["error"]:
-                            break
-                            
-                        elapsed = time.time() - start_time
-                        percent = min(int((elapsed / TIMEOUT_MAX) * 100), 99)
-                        prog_bar.progress(percent)
-                        status_msg.info(f"⏳ Compilazione in corso... ({percent}%)")
-                        time.sleep(1)
-                        if elapsed > TIMEOUT_MAX: 
-                            response_container["error"] = "Timeout della richiesta"
-                            break
-
-                    # --- GESTIONE RISULTATO ---
-                    if response_container["error"]:
-                        prog_bar.empty()
-                        status_msg.error(f"⚠️ {response_container['error']}")
-                    elif response_container["done"] and response_container["data"]:
-                        res = response_container["data"]
-                        prog_bar.progress(100)
-                        status_msg.success("🚀 PDF generati!")
-                        st.session_state.current_pdf_zip = res.content
-                        st.session_state.pdf_ready = True
-                        time.sleep(1)
-                        st.rerun()
-                        
+                            st.error(f"❌ Errore durante la compilazione: {str(e)}")
+                            st.info("Controlla il file latex_config.toml per verificare che i parametri siano corretti.")
+                                        
         # 4. STEP 3: DOWNLOAD FINALE PDF (Visibile solo dopo lo Step 2)
         if st.session_state.get('pdf_ready'):
             st.success("✨ PDF compilati con successo!")
