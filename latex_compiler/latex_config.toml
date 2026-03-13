@@ -1,0 +1,44 @@
+# ============================================================
+#  latex_config.toml  —  Configurazione Compilatore LaTeX
+#  Cambia 'mode' per switchare backend. Il codice non va toccato.
+# ============================================================
+
+[compiler]
+# Modalità attiva: "local" | "huggingface" | "render"
+mode = "huggingface"
+
+
+# ------------------------------------------------------------
+#  Backend LOCALE
+# ------------------------------------------------------------
+[local]
+pdflatex_path = "pdflatex"   # percorso eseguibile (vuoto = cerca nel PATH)
+work_dir      = ""            # cartella temp (vuoto = temp di sistema)
+timeout       = 60            # secondi per ogni file .tex
+passes        = 2             # passate pdflatex (utile per indici/riferimenti)
+
+
+# ------------------------------------------------------------
+#  Backend HUGGINGFACE
+# ------------------------------------------------------------
+[huggingface]
+api_url = "https://xfrancgh-compiletex.hf.space/compile-multiple"
+api_key = ""     # lascia vuoto per leggere da env HF_TOKEN
+timeout = 180
+
+
+# ------------------------------------------------------------
+#  Backend RENDER.COM
+# ------------------------------------------------------------
+[render]
+api_url = "https://compiletex.onrender.com/compile-multiple"
+api_key = "aaa"     # lascia vuoto per leggere da env RENDER_API_KEY
+timeout = 180
+
+
+# ------------------------------------------------------------
+#  Output (comune a tutti i backend)
+# ------------------------------------------------------------
+[output]
+combined_pdf_name    = "00_TUTTE_LE_VERIFICHE.pdf"
+keep_individual_pdfs = true
