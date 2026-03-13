@@ -4,4 +4,3 @@ venv/
 .env
 .streamlit/secrets.toml
 credenziali_google.json
-latex_compiler/latex_config.toml
